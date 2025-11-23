@@ -9,6 +9,10 @@ app = Flask(__name__)
 CORS(app)
 lastesttempeturedata = None
 
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({"message": "Temperature Server", "endpoints": ["/temperature"]})
+
 @app.route('/temperature', methods=['GET'])
 def get_temperature():
     # Mocked temperature data
@@ -23,7 +27,7 @@ def receive_sensordata():
     global lastesttempeturedata 
     data = request.get_json()
     lastesttempeturedata = data
-    return 
+    return jsonify({"status": "success"}), 200 
     
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
