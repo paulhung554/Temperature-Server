@@ -114,16 +114,11 @@ def check_temperature_alert():
     except Exception as e:
         logger.exception("temperature/alert: 500 error - %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500
-    
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    logger.info("Starting Temperature Server on port %s", port)
-    app.run(host='0.0.0.0', port=port)
 
 
 # ============================================================================
 # EMAIL NOTIFICATION SYSTEM - SendGrid Integration
-# Self-contained for Render deployment
+# (Defined before if __name__ so they exist when running with python server.py)
 # ============================================================================
 
 def send_temperature_alert_email(current_temperature, threshold_temperature):
@@ -305,3 +300,9 @@ def send_custom_notification(subject, message, recipient_email=None):
             "status": "failed",
             "error": str(e)
         }
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    logger.info("Starting Temperature Server on port %s", port)
+    app.run(host='0.0.0.0', port=port)
