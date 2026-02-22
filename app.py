@@ -6,19 +6,7 @@ from flask_cors import CORS
 import os
 import requests
 import json
-import logging
-import sys
 from datetime import datetime
-
-# Configure logging for Render – stdout is captured in Render logs
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
-    force=True,
-)
-logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
@@ -28,20 +16,11 @@ lastesttempeturedata = None
 SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY', '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')
 ALERT_EMAIL = "paulhung554@gmail.com"
 
-
-@app.before_request
-def log_request():
-    """Log incoming requests for debugging."""
-    logger.info("Request: %s %s", request.method, request.path)
-
-
-@app.after_request
-def log_response(response):
-    """Log response status so 500s are visible with context."""
-    if response.status_code >= 400:
-        logger.warning("Response: %s %s -> %s", request.method, request.path, response.status_code)
-    return response
-
+# Threshold storage (in-memory for now, can be upgraded to database)
+threshold_config = {
+    "plc1_threshold": 30.0,
+    "plc2_threshold": 32.0
+}
 
 @app.route('/', methods=['GET'])
 def root():
@@ -70,29 +49,20 @@ def check_temperature_alert():
     Expects JSON: {"current_temperature": <value>, "threshold_temperature": <value>}
     """
     try:
-        data = request.get_json(silent=True)
-        logger.info("temperature/alert payload: %s", data)
-
-        if data is None:
-            logger.warning("temperature/alert: invalid or missing JSON body")
-            return jsonify({"status": "error", "message": "Invalid or missing JSON body"}), 400
-
+        data = request.get_json()
         current_temp = data.get('current_temperature')
         threshold_temp = data.get('threshold_temperature')
-
+        
         if current_temp is None or threshold_temp is None:
-            logger.warning("temperature/alert: missing fields (current_temperature=%s, threshold_temperature=%s)", current_temp, threshold_temp)
             return jsonify({"status": "error", "message": "Missing current_temperature or threshold_temperature"}), 400
-
+        
         current_temp = float(current_temp)
         threshold_temp = float(threshold_temp)
-        logger.info("temperature/alert: current=%.2f, threshold=%.2f", current_temp, threshold_temp)
-
+        
         # Check if current temperature exceeds threshold
         if current_temp > threshold_temp:
+            # Send email alert
             email_response = send_temperature_alert_email(current_temp, threshold_temp)
-            if email_response.get("status") != "sent":
-                logger.warning("temperature/alert: email send failed: %s", email_response)
             return jsonify({
                 "status": "alert_sent",
                 "message": f"Temperature {current_temp}°C exceeds threshold {threshold_temp}°C. Email alert sent!",
@@ -107,18 +77,86 @@ def check_temperature_alert():
                 "current_temperature": current_temp,
                 "threshold_temperature": threshold_temp
             }), 200
-
-    except (ValueError, TypeError) as e:
-        logger.warning("temperature/alert: bad input - %s", e, exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 400
+            
     except Exception as e:
-        logger.exception("temperature/alert: 500 error - %s", e)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/threshold', methods=['GET'])
+def get_threshold():
+    """
+    Get current threshold configuration for all PLCs
+    """
+    return jsonify(threshold_config), 200
+
+@app.route('/threshold/<plc_id>', methods=['GET'])
+def get_plc_threshold(plc_id):
+    """
+    Get threshold for a specific PLC
+    Args:
+        plc_id: 'plc1' or 'plc2'
+    """
+    key = f"{plc_id}_threshold"
+    if key in threshold_config:
+        return jsonify({"plc": plc_id, "threshold": threshold_config[key]}), 200
+    return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
+
+@app.route('/threshold', methods=['POST'])
+def update_threshold():
+    """
+    Update threshold configuration
+    Expects JSON: {"plc1_threshold": <value>, "plc2_threshold": <value>}
+    """
+    try:
+        data = request.get_json()
+        if 'plc1_threshold' in data:
+            threshold_config['plc1_threshold'] = float(data['plc1_threshold'])
+        if 'plc2_threshold' in data:
+            threshold_config['plc2_threshold'] = float(data['plc2_threshold'])
+        
+        return jsonify({
+            "status": "success",
+            "message": "Threshold updated",
+            "config": threshold_config
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/threshold/<plc_id>', methods=['POST'])
+def update_plc_threshold(plc_id):
+    """
+    Update threshold for a specific PLC
+    Args:
+        plc_id: 'plc1' or 'plc2'
+    Expects JSON: {"threshold": <value>}
+    """
+    try:
+        data = request.get_json()
+        threshold = float(data.get('threshold'))
+        key = f"{plc_id}_threshold"
+        
+        if key not in threshold_config:
+            return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
+        
+        threshold_config[key] = threshold
+        
+        return jsonify({
+            "status": "success",
+            "message": f"{plc_id} threshold updated",
+            "plc": plc_id,
+            "threshold": threshold
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    
+    
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
 
 
 # ============================================================================
 # EMAIL NOTIFICATION SYSTEM - SendGrid Integration
-# (Defined before if __name__ so they exist when running with python server.py)
+# Self-contained for Render deployment
 # ============================================================================
 
 def send_temperature_alert_email(current_temperature, threshold_temperature):
@@ -133,13 +171,11 @@ def send_temperature_alert_email(current_temperature, threshold_temperature):
         dict: Status and response information
     """
     if not SENDGRID_API_KEY:
-        logger.error("send_temperature_alert_email: SENDGRID_API_KEY not configured")
         return {
-            "status": "failed",
+            "status": "failed", 
             "error": "SENDGRID_API_KEY environment variable not configured"
         }
-
-    logger.info("send_temperature_alert_email: sending alert current=%.2f threshold=%.2f", current_temperature, threshold_temperature)
+    
     subject = f"🚨 Temperature Alert: {current_temperature}°C exceeds {threshold_temperature}°C"
     
     text_content = f"""
@@ -210,25 +246,18 @@ This is an automated alert from your Temperature Monitoring System.
         )
         
         if response.status_code == 202:
-            logger.info("send_temperature_alert_email: SendGrid 202 accepted")
             return {
                 "status": "sent",
                 "message": "Email sent successfully",
                 "response_code": response.status_code
             }
         else:
-            logger.error(
-                "send_temperature_alert_email: SendGrid failed status=%s body=%s",
-                response.status_code,
-                response.text[:500] if response.text else "(empty)"
-            )
             return {
                 "status": "failed",
                 "error": f"SendGrid API error: {response.status_code}",
                 "details": response.text
             }
     except Exception as e:
-        logger.exception("send_temperature_alert_email: exception - %s", e)
         return {
             "status": "failed",
             "error": str(e)
@@ -289,20 +318,12 @@ def send_custom_notification(subject, message, recipient_email=None):
                 "response_code": response.status_code
             }
         else:
-            logger.error("send_custom_notification: SendGrid failed status=%s body=%s", response.status_code, response.text[:500] if response.text else "(empty)")
             return {
                 "status": "failed",
                 "error": f"SendGrid API error: {response.status_code}"
             }
     except Exception as e:
-        logger.exception("send_custom_notification: exception - %s", e)
         return {
             "status": "failed",
             "error": str(e)
         }
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    logger.info("Starting Temperature Server on port %s", port)
-    app.run(host='0.0.0.0', port=port)
