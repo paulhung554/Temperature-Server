@@ -6,7 +6,20 @@ from flask_cors import CORS
 import os
 import requests
 import json
+import logging
 from datetime import datetime
+
+# Configure comprehensive logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler('server.log')  # File output
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
@@ -24,14 +37,18 @@ threshold_config = {
 
 @app.route('/', methods=['GET'])
 def root():
-    return jsonify({"message": "Temperature Server", "endpoints": ["/temperature"]})
+    logger.info("Root endpoint accessed")
+    return jsonify({"message": "Temperature Server", "endpoints": ["/temperature", "/threshold"]})
 
 @app.route('/temperature', methods=['GET'])
 def get_temperature():
     # Mocked temperature data
-    if lastesttempeturedata :
-        return jsonify({"temperature": lastesttempeturedata.get('temperature')})
-    return jsonify({"temperature": "Not Availablable"})
+    if lastesttempeturedata:
+        temp_value = lastesttempeturedata.get('temperature')
+        logger.debug(f"GET /temperature - Returning current temperature: {temp_value}°C")
+        return jsonify({"temperature": temp_value})
+    logger.warning("GET /temperature - No temperature data available yet")
+    return jsonify({"temperature": "Not Available"})
         
     
 @app.route('/temperature', methods=['POST'])
@@ -40,6 +57,17 @@ def receive_sensordata():
     global lastesttempeturedata 
     data = request.get_json()
     lastesttempeturedata = data
+    
+    logger.info("=" * 70)
+    logger.info("📊 RECEIVED TEMPERATURE DATA FROM LOCAL MODBUS")
+    logger.info("=" * 70)
+    logger.info(f"  PLC: {data.get('plc', 'Unknown')}")
+    logger.info(f"  Temperature Value: {data.get('temperature')}°C")
+    logger.info(f"  Register: {data.get('register', 'N/A')}")
+    logger.info(f"  Timestamp: {data.get('timestamp', 'N/A')}")
+    logger.info(f"  Raw Payload: {json.dumps(data, indent=2)}")
+    logger.info("=" * 70)
+    
     return jsonify({"status": "success"}), 200 
 
 @app.route('/temperature/alert', methods=['POST'])
@@ -53,7 +81,10 @@ def check_temperature_alert():
         current_temp = data.get('current_temperature')
         threshold_temp = data.get('threshold_temperature')
         
+        logger.debug(f"Temperature Alert Check - Current: {current_temp}°C, Threshold: {threshold_temp}°C")
+        
         if current_temp is None or threshold_temp is None:
+            logger.warning(f"Temperature Alert - Missing parameters. Current: {current_temp}, Threshold: {threshold_temp}")
             return jsonify({"status": "error", "message": "Missing current_temperature or threshold_temperature"}), 400
         
         current_temp = float(current_temp)
@@ -61,6 +92,7 @@ def check_temperature_alert():
         
         # Check if current temperature exceeds threshold
         if current_temp > threshold_temp:
+            logger.warning(f"🚨 TEMPERATURE ALERT TRIGGERED - {current_temp}°C > {threshold_temp}°C (Excess: {current_temp - threshold_temp}°C)")
             # Send email alert
             email_response = send_temperature_alert_email(current_temp, threshold_temp)
             return jsonify({
@@ -71,6 +103,7 @@ def check_temperature_alert():
                 "email_response": email_response
             }), 200
         else:
+            logger.info(f"✅ Temperature within threshold - {current_temp}°C <= {threshold_temp}°C")
             return jsonify({
                 "status": "ok",
                 "message": f"Temperature {current_temp}°C is within threshold {threshold_temp}°C",
@@ -79,6 +112,7 @@ def check_temperature_alert():
             }), 200
             
     except Exception as e:
+        logger.error(f"❌ Error in temperature alert check: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/threshold', methods=['GET'])
@@ -86,6 +120,8 @@ def get_threshold():
     """
     Get current threshold configuration for all PLCs
     """
+    logger.info("GET /threshold - Retrieving all thresholds")
+    logger.debug(f"Current threshold config: {json.dumps(threshold_config)}")
     return jsonify(threshold_config), 200
 
 @app.route('/threshold/<plc_id>', methods=['GET'])
@@ -97,7 +133,10 @@ def get_plc_threshold(plc_id):
     """
     key = f"{plc_id}_threshold"
     if key in threshold_config:
-        return jsonify({"plc": plc_id, "threshold": threshold_config[key]}), 200
+        value = threshold_config[key]
+        logger.info(f"GET /threshold/{plc_id} - Retrieved threshold: {value}°C")
+        return jsonify({"plc": plc_id, "threshold": value}), 200
+    logger.warning(f"GET /threshold/{plc_id} - Invalid PLC ID: {plc_id}")
     return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
 
 @app.route('/threshold', methods=['POST'])
@@ -108,10 +147,31 @@ def update_threshold():
     """
     try:
         data = request.get_json()
+        
+        logger.info("=" * 70)
+        logger.info("🎯 RECEIVED NEW SETPOINT(S) FROM FRONTEND")
+        logger.info("=" * 70)
+        
+        updated_plcs = []
+        
         if 'plc1_threshold' in data:
-            threshold_config['plc1_threshold'] = float(data['plc1_threshold'])
+            old_value = threshold_config.get('plc1_threshold', 'N/A')
+            new_value = float(data['plc1_threshold'])
+            threshold_config['plc1_threshold'] = new_value
+            logger.info(f"  PLC1 Threshold Updated: {old_value}°C → {new_value}°C")
+            updated_plcs.append(f"PLC1: {old_value}°C → {new_value}°C")
+            
         if 'plc2_threshold' in data:
-            threshold_config['plc2_threshold'] = float(data['plc2_threshold'])
+            old_value = threshold_config.get('plc2_threshold', 'N/A')
+            new_value = float(data['plc2_threshold'])
+            threshold_config['plc2_threshold'] = new_value
+            logger.info(f"  PLC2 Threshold Updated: {old_value}°C → {new_value}°C")
+            updated_plcs.append(f"PLC2: {old_value}°C → {new_value}°C")
+        
+        logger.info(f"  Total Updates: {len(updated_plcs)}")
+        logger.info(f"  New Configuration: {json.dumps(threshold_config)}")
+        logger.info("  ✅ Will be sent to local modbus on next poll cycle")
+        logger.info("=" * 70)
         
         return jsonify({
             "status": "success",
@@ -119,6 +179,7 @@ def update_threshold():
             "config": threshold_config
         }), 200
     except Exception as e:
+        logger.error(f"❌ Error updating threshold: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 400
 
 @app.route('/threshold/<plc_id>', methods=['POST'])
@@ -135,17 +196,31 @@ def update_plc_threshold(plc_id):
         key = f"{plc_id}_threshold"
         
         if key not in threshold_config:
+            logger.warning(f"POST /threshold/{plc_id} - Invalid PLC ID: {plc_id}")
             return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
         
+        old_value = threshold_config[key]
         threshold_config[key] = threshold
+        
+        logger.info("=" * 70)
+        logger.info(f"🎯 RECEIVED NEW SETPOINT FROM FRONTEND FOR {plc_id.upper()}")
+        logger.info("=" * 70)
+        logger.info(f"  Previous Threshold: {old_value}°C")
+        logger.info(f"  New Threshold: {threshold}°C")
+        logger.info(f"  Change: {threshold - old_value:+.1f}°C")
+        logger.info(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("  ✅ Will be sent to local modbus on next poll cycle")
+        logger.info("=" * 70)
         
         return jsonify({
             "status": "success",
             "message": f"{plc_id} threshold updated",
             "plc": plc_id,
-            "threshold": threshold
+            "threshold": threshold,
+            "previous_threshold": old_value
         }), 200
     except Exception as e:
+        logger.error(f"❌ Error updating {plc_id} threshold: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 400
     
     
