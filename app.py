@@ -42,13 +42,26 @@ def root():
 
 @app.route('/temperature', methods=['GET'])
 def get_temperature():
-    # Mocked temperature data
+    # Return temperature data including which PLC it came from
     if lastesttempeturedata:
         temp_value = lastesttempeturedata.get('temperature')
-        logger.debug(f"GET /temperature - Returning current temperature: {temp_value}°C")
-        return jsonify({"temperature": temp_value})
+        plc_source = lastesttempeturedata.get('plc', 'Unknown')
+        timestamp = lastesttempeturedata.get('timestamp', 'N/A')
+        register = lastesttempeturedata.get('register', 'N/A')
+        
+        logger.debug(f"GET /temperature - Returning current temperature: {temp_value}°C from {plc_source}")
+        return jsonify({
+            "temperature": temp_value,
+            "plc": plc_source,
+            "register": register,
+            "timestamp": timestamp
+        })
     logger.warning("GET /temperature - No temperature data available yet")
-    return jsonify({"temperature": "Not Available"})
+    return jsonify({
+        "temperature": "Not Available",
+        "plc": "Unknown",
+        "error": "No data received from any PLC yet"
+    })
         
     
 @app.route('/temperature', methods=['POST'])
