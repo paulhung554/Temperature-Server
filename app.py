@@ -1,417 +1,443 @@
-# Temperature Monitoring Server with SendGrid Email Alerts
-# This file is self-contained for Render deployment
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Room Temperature Status</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    /* Map is always visible */
+    #map { height: 560px; width: 100%; display: block; }
+    .leaflet-popup-content-wrapper { border-radius: 12px; background: #fffaf5; }
+  </style>
+</head>
+<body>
+  <h1>🌡️ Room Temperature</h1>
+  
+  <!-- PLC1 Section -->
+  <div style="margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
+    <h2>PLC1 (Toronto)</h2>
+    <div style="margin-bottom: 10px;">
+      <label for="plc1-actual-temp">Actual Temperature (°C):</label>
+      <input type="number" id="plc1-actual-temp" placeholder="Enter actual temperature" step="0.1" style="padding: 5px; margin-left: 10px; width: 150px;">
+      <button onclick="setPLCActualTemp('PLC1')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set Actual Temp</button>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label for="plc1-setpoint">Setpoint (°C):</label>
+      <input type="number" id="plc1-setpoint" placeholder="Enter setpoint" step="0.1" style="padding: 5px; margin-left: 10px; width: 150px;">
+      <button onclick="setPLCSetpoint('PLC1')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set Setpoint</button>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label for="plc1-threshold">Threshold (°C):</label>
+      <input type="number" id="plc1-threshold" placeholder="Enter threshold" step="0.1" style="padding: 5px; margin-left: 10px; width: 150px;">
+      <button onclick="setPLCThreshold('PLC1')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set Threshold</button>
+    </div>
+    <p id="plc1-temp">Current: Loading PLC1 data...</p>
+    <p id="plc1-warning" style="color: red; font-weight: bold; display: none; margin-top: 10px;">⚠️ WARNING: Current temperature is HIGHER than threshold!</p>
+  </div>
 
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import os
-import requests
-import json
-import logging
-from datetime import datetime
+  <!-- PLC2 Section -->
+  <div style="margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9;">
+    <h2>PLC2 (Vancouver)</h2>
+    <div style="margin-bottom: 10px;">
+      <label for="plc2-actual-temp">Actual Temperature (°C):</label>
+      <input type="number" id="plc2-actual-temp" placeholder="Enter actual temperature" step="0.1" style="padding: 5px; margin-left: 10px; width: 150px;">
+      <button onclick="setPLCActualTemp('PLC2')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set Actual Temp</button>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label for="plc2-setpoint">Setpoint (°C):</label>
+      <input type="number" id="plc2-setpoint" placeholder="Enter setpoint" step="0.1" style="padding: 5px; margin-left: 10px; width: 150px;">
+      <button onclick="setPLCSetpoint('PLC2')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set Setpoint</button>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label for="plc2-threshold">Threshold (°C):</label>
+      <input type="number" id="plc2-threshold" placeholder="Enter threshold" step="0.1" style="padding: 5px; margin-left: 10px; width: 150px;">
+      <button onclick="setPLCThreshold('PLC2')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set Threshold</button>
+    </div>
+    <p id="plc2-temp">Current: Loading PLC2 data...</p>
+    <p id="plc2-warning" style="color: red; font-weight: bold; display: none; margin-top: 10px;">⚠️ WARNING: Current temperature is HIGHER than threshold!</p>
+  </div>
 
-# Configure comprehensive logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler(),  # Console output
-        logging.FileHandler('server.log')  # File output
-    ]
-)
-logger = logging.getLogger(__name__)
+  <!-- Setpoint Controls -->
+  <div style="margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+    <h3>Set Temperature Setpoints</h3>
+    <div style="margin-bottom: 10px;">
+      <label for="setpoint-plc1">PLC1 Setpoint (°C):</label>
+      <input type="number" id="setpoint-plc1" placeholder="Enter PLC1 setpoint" step="0.1" style="padding: 5px; margin-left: 10px; width: 120px;">
+      <button onclick="setPLCSetpoint('PLC1')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set PLC1</button>
+    </div>
+    <div>
+      <label for="setpoint-plc2">PLC2 Setpoint (°C):</label>
+      <input type="number" id="setpoint-plc2" placeholder="Enter PLC2 setpoint" step="0.1" style="padding: 5px; margin-left: 10px; width: 120px;">
+      <button onclick="setPLCSetpoint('PLC2')" style="padding: 5px 15px; margin-left: 10px; cursor: pointer;">Set PLC2</button>
+    </div>
+  </div>
 
-app = Flask(__name__)
-CORS(app)
-lastesttempeturedata = None
-
-# Configuration
-SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY', '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')
-ALERT_EMAIL = "paulhung554@gmail.com"
-
-# Threshold storage (in-memory for now, can be upgraded to database)
-threshold_config = {
-    "plc1_threshold": 30.0,
-    "plc2_threshold": 32.0
-}
-
-@app.route('/', methods=['GET'])
-def root():
-    logger.info("Root endpoint accessed")
-    return jsonify({"message": "Temperature Server", "endpoints": ["/temperature", "/threshold"]})
-
-@app.route('/temperature', methods=['GET'])
-def get_temperature():
-    # Return temperature data including which PLC it came from
-    if lastesttempeturedata:
-        temp_value = lastesttempeturedata.get('temperature')
-        plc_source = lastesttempeturedata.get('plc', 'Unknown')
-        timestamp = lastesttempeturedata.get('timestamp', 'N/A')
-        register = lastesttempeturedata.get('register', 'N/A')
-        
-        logger.debug(f"GET /temperature - Returning current temperature: {temp_value}°C from {plc_source}")
-        return jsonify({
-            "temperature": temp_value,
-            "plc": plc_source,
-            "register": register,
-            "timestamp": timestamp
+  <script>
+    function setPLCActualTemp(plc) {
+      const inputId = plc === 'PLC1' ? 'plc1-actual-temp' : 'plc2-actual-temp';
+      const input = document.getElementById(inputId);
+      const temp = parseFloat(input.value);
+      
+      if (isNaN(temp)) {
+        alert(`Please enter a valid temperature for ${plc}`);
+        return;
+      }
+      
+      // Send actual temperature to backend
+      fetch("https://temperature-server.onrender.com/temperature/manual/" + plc.toLowerCase(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          temperature: temp
         })
-    logger.warning("GET /temperature - No temperature data available yet")
-    return jsonify({
-        "temperature": "Not Available",
-        "plc": "Unknown",
-        "error": "No data received from any PLC yet"
-    })
-        
-    
-@app.route('/temperature', methods=['POST'])
-def receive_sensordata():
-    # Mocked temperature data
-    global lastesttempeturedata 
-    data = request.get_json()
-    lastesttempeturedata = data
-    
-    logger.info("=" * 70)
-    logger.info("📊 RECEIVED TEMPERATURE DATA FROM LOCAL MODBUS")
-    logger.info("=" * 70)
-    logger.info(f"  PLC: {data.get('plc', 'Unknown')}")
-    logger.info(f"  Temperature Value: {data.get('temperature')}°C")
-    logger.info(f"  Register: {data.get('register', 'N/A')}")
-    logger.info(f"  Timestamp: {data.get('timestamp', 'N/A')}")
-    logger.info(f"  Raw Payload: {json.dumps(data, indent=2)}")
-    logger.info("=" * 70)
-    
-    return jsonify({"status": "success"}), 200 
-
-@app.route('/temperature/alert', methods=['POST'])
-def check_temperature_alert():
-    """
-    Check if current temperature exceeds threshold and send email alert
-    Expects JSON: {"current_temperature": <value>, "threshold_temperature": <value>}
-    """
-    try:
-        data = request.get_json()
-        current_temp = data.get('current_temperature')
-        threshold_temp = data.get('threshold_temperature')
-        
-        logger.debug(f"Temperature Alert Check - Current: {current_temp}°C, Threshold: {threshold_temp}°C")
-        
-        if current_temp is None or threshold_temp is None:
-            logger.warning(f"Temperature Alert - Missing parameters. Current: {current_temp}, Threshold: {threshold_temp}")
-            return jsonify({"status": "error", "message": "Missing current_temperature or threshold_temperature"}), 400
-        
-        current_temp = float(current_temp)
-        threshold_temp = float(threshold_temp)
-        
-        # Check if current temperature exceeds threshold
-        if current_temp > threshold_temp:
-            logger.warning(f"🚨 TEMPERATURE ALERT TRIGGERED - {current_temp}°C > {threshold_temp}°C (Excess: {current_temp - threshold_temp}°C)")
-            # Send email alert
-            email_response = send_temperature_alert_email(current_temp, threshold_temp)
-            return jsonify({
-                "status": "alert_sent",
-                "message": f"Temperature {current_temp}°C exceeds threshold {threshold_temp}°C. Email alert sent!",
-                "current_temperature": current_temp,
-                "threshold_temperature": threshold_temp,
-                "email_response": email_response
-            }), 200
-        else:
-            logger.info(f"✅ Temperature within threshold - {current_temp}°C <= {threshold_temp}°C")
-            return jsonify({
-                "status": "ok",
-                "message": f"Temperature {current_temp}°C is within threshold {threshold_temp}°C",
-                "current_temperature": current_temp,
-                "threshold_temperature": threshold_temp
-            }), 200
-            
-    except Exception as e:
-        logger.error(f"❌ Error in temperature alert check: {str(e)}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/threshold', methods=['GET'])
-def get_threshold():
-    """
-    Get current threshold configuration for all PLCs
-    """
-    logger.info("GET /threshold - Retrieving all thresholds")
-    logger.debug(f"Current threshold config: {json.dumps(threshold_config)}")
-    return jsonify(threshold_config), 200
-
-@app.route('/threshold/<plc_id>', methods=['GET'])
-def get_plc_threshold(plc_id):
-    """
-    Get threshold for a specific PLC
-    Args:
-        plc_id: 'plc1' or 'plc2'
-    """
-    key = f"{plc_id}_threshold"
-    if key in threshold_config:
-        value = threshold_config[key]
-        logger.info(f"GET /threshold/{plc_id} - Retrieved threshold: {value}°C")
-        return jsonify({"plc": plc_id, "threshold": value}), 200
-    logger.warning(f"GET /threshold/{plc_id} - Invalid PLC ID: {plc_id}")
-    return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
-
-@app.route('/threshold', methods=['POST'])
-def update_threshold():
-    """
-    Update threshold configuration
-    Expects JSON: {"plc1_threshold": <value>, "plc2_threshold": <value>}
-    """
-    try:
-        data = request.get_json()
-        
-        logger.info("=" * 70)
-        logger.info("🎯 RECEIVED NEW SETPOINT(S) FROM FRONTEND")
-        logger.info("=" * 70)
-        
-        updated_plcs = []
-        
-        if 'plc1_threshold' in data:
-            old_value = threshold_config.get('plc1_threshold', 'N/A')
-            new_value = float(data['plc1_threshold'])
-            threshold_config['plc1_threshold'] = new_value
-            logger.info(f"  PLC1 Threshold Updated: {old_value}°C → {new_value}°C")
-            updated_plcs.append(f"PLC1: {old_value}°C → {new_value}°C")
-            
-        if 'plc2_threshold' in data:
-            old_value = threshold_config.get('plc2_threshold', 'N/A')
-            new_value = float(data['plc2_threshold'])
-            threshold_config['plc2_threshold'] = new_value
-            logger.info(f"  PLC2 Threshold Updated: {old_value}°C → {new_value}°C")
-            updated_plcs.append(f"PLC2: {old_value}°C → {new_value}°C")
-        
-        logger.info(f"  Total Updates: {len(updated_plcs)}")
-        logger.info(f"  New Configuration: {json.dumps(threshold_config)}")
-        logger.info("  ✅ Will be sent to local modbus on next poll cycle")
-        logger.info("=" * 70)
-        
-        return jsonify({
-            "status": "success",
-            "message": "Threshold updated",
-            "config": threshold_config
-        }), 200
-    except Exception as e:
-        logger.error(f"❌ Error updating threshold: {str(e)}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 400
-
-@app.route('/threshold/<plc_id>', methods=['POST'])
-def update_plc_threshold(plc_id):
-    """
-    Update threshold for a specific PLC
-    Args:
-        plc_id: 'plc1' or 'plc2'
-    Expects JSON: {"threshold": <value>}
-    """
-    try:
-        data = request.get_json()
-        threshold = float(data.get('threshold'))
-        key = f"{plc_id}_threshold"
-        
-        if key not in threshold_config:
-            logger.warning(f"POST /threshold/{plc_id} - Invalid PLC ID: {plc_id}")
-            return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
-        
-        old_value = threshold_config[key]
-        threshold_config[key] = threshold
-        
-        logger.info("=" * 70)
-        logger.info(f"🎯 RECEIVED NEW SETPOINT FROM FRONTEND FOR {plc_id.upper()}")
-        logger.info("=" * 70)
-        logger.info(f"  Previous Threshold: {old_value}°C")
-        logger.info(f"  New Threshold: {threshold}°C")
-        logger.info(f"  Change: {threshold - old_value:+.1f}°C")
-        logger.info(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("  ✅ Will be sent to local modbus on next poll cycle")
-        logger.info("=" * 70)
-        
-        return jsonify({
-            "status": "success",
-            "message": f"{plc_id} threshold updated",
-            "plc": plc_id,
-            "threshold": threshold,
-            "previous_threshold": old_value
-        }), 200
-    except Exception as e:
-        logger.error(f"❌ Error updating {plc_id} threshold: {str(e)}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 400
-    
-    
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-
-
-# ============================================================================
-# EMAIL NOTIFICATION SYSTEM - SendGrid Integration
-# Self-contained for Render deployment
-# ============================================================================
-
-def send_temperature_alert_email(current_temperature, threshold_temperature):
-    """
-    Send email alert when temperature exceeds threshold using SendGrid API.
-    
-    Args:
-        current_temperature (float): Current temperature in Celsius
-        threshold_temperature (float): Temperature threshold in Celsius
-        
-    Returns:
-        dict: Status and response information
-    """
-    if not SENDGRID_API_KEY:
-        return {
-            "status": "failed", 
-            "error": "SENDGRID_API_KEY environment variable not configured"
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log(`${plc} actual temperature response:`, data);
+        if (data.status === "success") {
+          alert(`${plc} actual temperature set to ${temp}°C`);
+          input.value = '';
+          // Refresh data to show updated temperature
+          fetchPLCData();
+        } else {
+          alert(`Error setting ${plc} actual temperature: ${data.message}`);
         }
-    
-    subject = f"🚨 Temperature Alert: {current_temperature}°C exceeds {threshold_temperature}°C"
-    
-    text_content = f"""
-TEMPERATURE ALERT!
+      })
+      .catch(err => {
+        console.error(`Error setting ${plc} actual temperature:`, err);
+        alert(`Error setting ${plc} actual temperature`);
+      });
+    }
 
-Current Temperature: {current_temperature}°C
-Temperature Threshold: {threshold_temperature}°C
-Alert Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    function setPLCThreshold(plc) {
+      const inputId = plc === 'PLC1' ? 'plc1-threshold' : 'plc2-threshold';
+      const input = document.getElementById(inputId);
+      const threshold = parseFloat(input.value);
+      
+      if (isNaN(threshold)) {
+        alert(`Please enter a valid threshold for ${plc}`);
+        return;
+      }
+      
+      // Send threshold to backend
+      fetch("https://temperature-server.onrender.com/threshold/" + plc.toLowerCase(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          threshold: threshold
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log(`${plc} threshold response:`, data);
+        if (data.status === "success") {
+          alert(`${plc} threshold set to ${threshold}°C`);
+          input.value = '';
+          // Refresh data to show updated threshold
+          fetchPLCData();
+        } else {
+          alert(`Error setting ${plc} threshold: ${data.message}`);
+        }
+      })
+      .catch(err => {
+        console.error(`Error setting ${plc} threshold:`, err);
+        alert(`Error setting ${plc} threshold`);
+      });
+    }
 
-The room temperature has exceeded the set threshold. Please take action.
+    function setPLCSetpoint(plc) {
+      const inputId = plc === 'PLC1' ? 'plc1-setpoint' : 'plc2-setpoint';
+      const input = document.getElementById(inputId);
+      const setpoint = parseFloat(input.value);
+      
+      if (isNaN(setpoint)) {
+        alert(`Please enter a valid setpoint for ${plc}`);
+        return;
+      }
+      
+      // Send setpoint to backend
+      fetch("https://temperature-server.onrender.com/setpoint/" + plc.toLowerCase(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          setpoint: setpoint
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log(`${plc} setpoint response:`, data);
+        if (data.status === "success") {
+          alert(`${plc} setpoint set to ${setpoint}°C`);
+          input.value = '';
+          // Refresh data to show updated setpoint
+          fetchPLCData();
+        } else {
+          alert(`Error setting ${plc} setpoint: ${data.message}`);
+        }
+      })
+      .catch(err => {
+        console.error(`Error setting ${plc} setpoint:`, err);
+        alert(`Error setting ${plc} setpoint`);
+      });
+    }
 
-This is an automated alert from your Temperature Monitoring System.
-"""
+    function fetchPLCData() {
+      fetch("https://temperature-server.onrender.com/plc-data")
+        .then(res => {
+          if (!res.ok) throw new Error('Network response not ok: ' + res.status);
+          return res.json();
+        })
+        .then(data => {
+          console.log('PLC data response', data);
+          
+          // Update PLC1 data
+          updatePLCDisplay('PLC1', data.PLC1);
+          
+          // Update PLC2 data
+          updatePLCDisplay('PLC2', data.PLC2);
+        })
+        .catch(err => {
+          console.error('fetchPLCData error:', err);
+          document.getElementById('plc1-temp').innerText = "Error fetching PLC1 data.";
+          document.getElementById('plc2-temp').innerText = "Error fetching PLC2 data.";
+        });
+    }
+
+    function updatePLCDisplay(plc, plcData) {
+      const tempElementId = plc === 'PLC1' ? 'plc1-temp' : 'plc2-temp';
+      const warningElementId = plc === 'PLC1' ? 'plc1-warning' : 'plc2-warning';
+      
+      const tempElement = document.getElementById(tempElementId);
+      const warningElement = document.getElementById(warningElementId);
+      
+      const currentTemp = plcData.temperature;
+      const setpoint = plcData.setpoint;
+      const threshold = plcData.threshold;
+      
+      if (currentTemp !== "Not Available") {
+        tempElement.innerText = `Current temperature: ${currentTemp}°C | Setpoint: ${setpoint}°C | Threshold: ${threshold}°C`;
+        
+        // Check if current temperature is greater than threshold
+        const isAbove = parseFloat(currentTemp) > parseFloat(threshold);
+        if (isAbove) {
+          warningElement.style.display = 'block';
+          // Show map and update appropriate marker
+          showMapIfNeeded();
+          updateMarkers(plc, true);
+          // Send alert to backend
+          sendTemperatureAlert(currentTemp, threshold, plc);
+        } else {
+          warningElement.style.display = 'none';
+          updateMarkers(plc, false);
+        }
+      } else {
+        tempElement.innerText = `${plc} data not available yet`;
+        warningElement.style.display = 'none';
+        updateMarkers(plc, false);
+      }
+    }
+
+    function sendTemperatureAlert(currentTemp, setpoint, plc) {
+      fetch("https://temperature-server.onrender.com/temperature/alert", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          current_temperature: currentTemp,
+          threshold_temperature: setpoint
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log(`${plc} alert response:`, data);
+      })
+      .catch(err => {
+        console.error(`Error sending ${plc} alert:`, err);
+    }
+
+    // Fetch immediately on page load
+    fetchPLCData();
+
+    // Auto-refresh every 5 seconds
+    setInterval(fetchPLCData, 5000);
+
+    // Display the stored setpoint on page load and initialize the map (map always visible)
+    window.onload = function() {
+      // Initialize setpoint inputs with current values from backend
+      fetch("https://temperature-server.onrender.com/threshold")
+        .then(res => res.json())
+        .then(data => {
+          document.getElementById('setpoint-plc1').placeholder = `Current PLC1 setpoint: ${data.plc1_setpoint}°C`;
+          document.getElementById('setpoint-plc2').placeholder = `Current PLC2 setpoint: ${data.plc2_setpoint}°C`;
+          document.getElementById('plc1-setpoint').placeholder = `Current setpoint: ${data.plc1_setpoint}°C`;
+          document.getElementById('plc1-threshold').placeholder = `Current threshold: ${data.plc1_threshold}°C`;
+          document.getElementById('plc2-setpoint').placeholder = `Current setpoint: ${data.plc2_setpoint}°C`;
+          document.getElementById('plc2-threshold').placeholder = `Current threshold: ${data.plc2_threshold}°C`;
+        })
+        .catch(err => {
+          console.error('Error fetching thresholds:', err);
+        });
+      
+      if (typeof initMap === 'function') initMap();
+    };
+  </script>
+
+  <!-- Inlined Canada map -->
+  <section style="margin-top: 30px;">
+    <h2>🗺️ Canada Map (PLC Monitoring)</h2>
+    <p style="margin-top:0; margin-bottom:8px; color:#555;">Map displays PLC1 (Toronto) and PLC2 (Vancouver) temperature alerts.</p>
+    <div style="border:1px solid #ddd; border-radius:6px; overflow:hidden;">
+      <div id="map"></div>
+    </div>
+    <p style="font-size:90%; color:#666; margin-top:8px;">If the map does not load, <a href="../Mapping/canada_map.html" target="_blank" rel="noopener">open it in a new tab</a>.</p>
+  </section>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Initialize map and Toronto marker; called on window.onload
+    let torontoMarker = null;
+      let vancouverMarker = null;
     
-    html_content = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="border-left: 4px solid #ff6b6b; padding: 20px; background-color: #ffe0e0;">
-                <h2 style="color: #ff6b6b; margin: 0 0 10px 0;">🚨 TEMPERATURE ALERT</h2>
-                <p><strong>Current Temperature:</strong> {current_temperature}°C</p>
-                <p><strong>Threshold:</strong> {threshold_temperature}°C</p>
-                <p><strong>Excess:</strong> {current_temperature - threshold_temperature}°C above threshold</p>
-                <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-                <p style="color: #666; font-size: 12px;">This is an automated alert from your Temperature Monitoring System.</p>
-            </div>
-        </body>
-    </html>
-    """
+    function initMap() {
+      // If map already exists, do nothing (prevents double-initialize error)
+      if (window.__leafletMap) return;
+
+      const map = L.map('map', { zoomControl: false }).setView([56, -96], 4);
+      // store global reference for later marker operations
+      window.__leafletMap = map;
+
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CARTO'
+      }).addTo(map);
+
+        // Markers will be created lazily when needed
+        torontoMarker = null;
+      vancouverMarker = null;
+    }
+
+    // Legacy function - maintained for compatibility
+    function updateTorontoMarker(isAbove) {
+      // Maintained for backwards compatibility
+    }
     
-    try:
-        response = requests.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={
-                "Authorization": f"Bearer {SENDGRID_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "personalizations": [
-                    {
-                        "to": [
-                            {
-                                "email": ALERT_EMAIL,
-                                "name": "Temperature Alert System"
-                            }
-                        ],
-                        "subject": subject
-                    }
-                ],
-                "from": {
-                    "email": ALERT_EMAIL,
-                    "name": "Temperature Monitoring System"
-                },
-                "content": [
-                    {
-                        "type": "text/plain",
-                        "value": text_content
-                    },
-                    {
-                        "type": "text/html",
-                        "value": html_content
-                    }
-                ],
-                "reply_to": {
-                    "email": ALERT_EMAIL
+    // Helper to update markers based on PLC: blink yellow for 1s when `isAbove` true
+    function updateMarkers(plcSource, isAbove) {
+      // If below threshold, remove marker from map (if present)
+      if (!isAbove) {
+        if (plcSource === 'PLC1' || plcSource === 'plc1') {
+          if (torontoMarker && torontoMarker.remove) {
+            torontoMarker.remove();
+            torontoMarker = null;
+          }
+        } else if (plcSource === 'PLC2' || plcSource === 'plc2') {
+          if (vancouverMarker && vancouverMarker.remove) {
+            vancouverMarker.remove();
+            vancouverMarker = null;
+          }
+        }
+        return;
+      }
+
+      // Above threshold: ensure map and marker exist
+      showMapIfNeeded();
+      
+      if (plcSource === 'PLC1' || plcSource === 'plc1') {
+        blinkMarker('toronto');
+      } else if (plcSource === 'PLC2' || plcSource === 'plc2') {
+        blinkMarker('vancouver');
+      }
+    }
+    
+    // Helper function to create and blink a marker
+    function blinkMarker(location) {
+      let marker = null;
+      let coords = null;
+      let title = null;
+      
+      if (location === 'toronto') {
+        marker = torontoMarker;
+        coords = [43.6532, -79.3832];
+        title = 'Toronto (PLC1)';
+      } else if (location === 'vancouver') {
+        marker = vancouverMarker;
+        coords = [49.2827, -123.1207];
+        title = 'Vancouver (PLC2)';
+      }
+      
+      if (!marker) {
+        marker = L.circleMarker(coords, {
+          radius: 12,
+          fillColor: '#ffd43b', // start yellow for blink
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9
+        }).addTo(window.__leafletMap).bindPopup(`<strong>${title}</strong>`);
+        
+        if (location === 'toronto') {
+          torontoMarker = marker;
+        } else if (location === 'vancouver') {
+          vancouverMarker = marker;
+        }
+      }
+
+      // Blink: toggle visibility every 200ms for 1 second, then set to red
+      let blinkCount = 0;
+      const maxBlinks = 5; // 5 toggles == ~1s (200ms each)
+      const originalFill = '#e63946';
+      const blinkColor = '#ffd43b';
+
+      const blinkInterval = setInterval(() => {
+        if (!marker) {
+          clearInterval(blinkInterval);
+          return;
+        }
+        const visible = (blinkCount % 2) === 0;
+        marker.setStyle({ fillColor: visible ? blinkColor : '#ffffff', fillOpacity: visible ? 0.9 : 0.0 });
+        blinkCount += 1;
+        if (blinkCount >= maxBlinks) {
+          clearInterval(blinkInterval);
+          // Final state: solid red and open popup
+          if (marker) {
+            marker.setStyle({ fillColor: originalFill, fillOpacity: 0.9 });
+            marker.openPopup();
+          }
+        }
+      }, 200);
+    }
+
+    // Show/hide map container (initialize map on first show)
+    let mapInitialized = false;
+    function showMapIfNeeded() {
+      const mapEl = document.getElementById('map');
+        if (!mapEl) return;
+        if (!mapInitialized) {
+          initMap();
+          mapInitialized = true;
+        }
+    }
+
+      function hideMap() {
+        // Per requirement: do not hide the map. Only remove marker if present.
+                if (vancouverMarker && vancouverMarker.remove) {
+                  vancouverMarker.remove();
+                  vancouverMarker = null;
                 }
-            }
-        )
-        
-        if response.status_code == 202:
-            return {
-                "status": "sent",
-                "message": "Email sent successfully",
-                "response_code": response.status_code
-            }
-        else:
-            return {
-                "status": "failed",
-                "error": f"SendGrid API error: {response.status_code}",
-                "details": response.text
-            }
-    except Exception as e:
-        return {
-            "status": "failed",
-            "error": str(e)
+        if (torontoMarker && torontoMarker.remove) {
+          torontoMarker.remove();
+          torontoMarker = null;
         }
+      }
 
-
-def send_custom_notification(subject, message, recipient_email=None):
-    """
-    Send a custom email notification via SendGrid.
-    
-    Args:
-        subject (str): Email subject
-        message (str): Email message content
-        recipient_email (str): Recipient email address (defaults to ALERT_EMAIL)
-        
-    Returns:
-        dict: Status and response information
-    """
-    if not SENDGRID_API_KEY:
-        return {
-            "status": "failed",
-            "error": "SENDGRID_API_KEY environment variable not configured"
-        }
-    
-    recipient = recipient_email or ALERT_EMAIL
-    
-    try:
-        response = requests.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={
-                "Authorization": f"Bearer {SENDGRID_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "personalizations": [
-                    {
-                        "to": [{"email": recipient}],
-                        "subject": subject
-                    }
-                ],
-                "from": {
-                    "email": ALERT_EMAIL,
-                    "name": "System Notification"
-                },
-                "content": [
-                    {
-                        "type": "text/plain",
-                        "value": message
-                    }
-                ]
-            }
-        )
-        
-        if response.status_code == 202:
-            return {
-                "status": "sent",
-                "message": "Email sent successfully",
-                "response_code": response.status_code
-            }
-        else:
-            return {
-                "status": "failed",
-                "error": f"SendGrid API error: {response.status_code}"
-            }
-    except Exception as e:
-        return {
-            "status": "failed",
-            "error": str(e)
-        }
+    // Keep a global reference to the Leaflet map for marker creation
+    // assigned in initMap
+  </script>
+</body>
+</html>
