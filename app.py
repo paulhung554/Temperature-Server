@@ -428,11 +428,6 @@ def set_manual_temperature(plc_id):
     except Exception as e:
         logger.error(f"❌ Error setting manual temperature for {plc_id}: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 400
-    
-    
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
 
 
 # ============================================================================
@@ -608,3 +603,8 @@ def send_custom_notification(subject, message, recipient_email=None):
             "status": "failed",
             "error": str(e)
         }
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
