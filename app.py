@@ -446,13 +446,27 @@ def send_temperature_alert_email(current_temperature, threshold_temperature):
     Returns:
         dict: Status and response information
     """
+    logger.info("=" * 80)
+    logger.info("📧 SENDGRID EMAIL ALERT - STARTING")
+    logger.info("=" * 80)
+    
+    logger.debug(f"  SENDGRID_API_KEY exists: {bool(SENDGRID_API_KEY)}")
+    logger.debug(f"  SENDGRID_API_KEY length: {len(SENDGRID_API_KEY) if SENDGRID_API_KEY else 0}")
+    logger.debug(f"  Alert Email: {ALERT_EMAIL}")
+    logger.debug(f"  Current Temperature: {current_temperature}°C")
+    logger.debug(f"  Threshold Temperature: {threshold_temperature}°C")
+    
     if not SENDGRID_API_KEY:
+        logger.error("❌ SENDGRID_API_KEY is NOT configured!")
         return {
             "status": "failed", 
             "error": "SENDGRID_API_KEY environment variable not configured"
         }
     
+    logger.info("✅ SENDGRID_API_KEY is configured")
+    
     subject = f"🚨 Temperature Alert: {current_temperature}°C exceeds {threshold_temperature}°C"
+    logger.debug(f"  Email Subject: {subject}")
     
     text_content = f"""
 TEMPERATURE ALERT!
@@ -482,58 +496,86 @@ This is an automated alert from your Temperature Monitoring System.
     </html>
     """
     
+    logger.debug(f"  Email text preview: {text_content[:100]}...")
+    logger.debug(f"  Email HTML preview: {html_content[:100]}...")
+    
     try:
+        logger.info("📤 Preparing SendGrid API request...")
+        
+        payload = {
+            "personalizations": [
+                {
+                    "to": [
+                        {
+                            "email": ALERT_EMAIL,
+                            "name": "Temperature Alert System"
+                        }
+                    ],
+                    "subject": subject
+                }
+            ],
+            "from": {
+                "email": ALERT_EMAIL,
+                "name": "Temperature Monitoring System"
+            },
+            "content": [
+                {
+                    "type": "text/plain",
+                    "value": text_content
+                },
+                {
+                    "type": "text/html",
+                    "value": html_content
+                }
+            ],
+            "reply_to": {
+                "email": ALERT_EMAIL
+            }
+        }
+        
+        logger.debug(f"  Payload structure: {json.dumps({k: v if k != 'content' else '...' for k, v in payload.items()}, indent=2)}")
+        
+        headers = {
+            "Authorization": f"Bearer {SENDGRID_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        logger.debug(f"  Headers: Authorization: Bearer [***hidden***], Content-Type: application/json")
+        logger.info("🔗 Sending request to SendGrid API (https://api.sendgrid.com/v3/mail/send)...")
+        
         response = requests.post(
             "https://api.sendgrid.com/v3/mail/send",
-            headers={
-                "Authorization": f"Bearer {SENDGRID_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "personalizations": [
-                    {
-                        "to": [
-                            {
-                                "email": ALERT_EMAIL,
-                                "name": "Temperature Alert System"
-                            }
-                        ],
-                        "subject": subject
-                    }
-                ],
-                "from": {
-                    "email": ALERT_EMAIL,
-                    "name": "Temperature Monitoring System"
-                },
-                "content": [
-                    {
-                        "type": "text/plain",
-                        "value": text_content
-                    },
-                    {
-                        "type": "text/html",
-                        "value": html_content
-                    }
-                ],
-                "reply_to": {
-                    "email": ALERT_EMAIL
-                }
-            }
+            headers=headers,
+            json=payload
         )
         
+        logger.info(f"📥 Received response from SendGrid:")
+        logger.info(f"  Status Code: {response.status_code}")
+        logger.info(f"  Response Headers: {dict(response.headers)}")
+        logger.debug(f"  Response Body: {response.text}")
+        
         if response.status_code == 202:
+            logger.info("✅ EMAIL SENT SUCCESSFULLY! (Status: 202 Accepted)")
+            logger.info("=" * 80)
             return {
                 "status": "sent",
                 "message": "Email sent successfully",
                 "response_code": response.status_code
             }
         else:
+            logger.error(f"❌ SendGrid API returned unexpected status code: {response.status_code}")
+            logger.error(f"  Response text: {response.text}")
+            logger.info("=" * 80)
             return {
                 "status": "failed",
                 "error": f"SendGrid API error: {response.status_code}",
                 "details": response.text
             }
     except Exception as e:
+        logger.error(f"❌ EXCEPTION occurred while sending email: {type(e).__name__}")
+        logger.error(f"  Error message: {str(e)}")
+        logger.exception(f"  Full traceback:")
+        logger.info("=" * 80)
         return {
             "status": "failed",
             "error": str(e)
@@ -552,53 +594,93 @@ def send_custom_notification(subject, message, recipient_email=None):
     Returns:
         dict: Status and response information
     """
+    logger.info("=" * 80)
+    logger.info("📧 SENDGRID CUSTOM NOTIFICATION - STARTING")
+    logger.info("=" * 80)
+    
+    logger.debug(f"  SENDGRID_API_KEY exists: {bool(SENDGRID_API_KEY)}")
+    logger.debug(f"  SENDGRID_API_KEY length: {len(SENDGRID_API_KEY) if SENDGRID_API_KEY else 0}")
+    logger.debug(f"  Subject: {subject}")
+    logger.debug(f"  Custom recipient: {recipient_email}")
+    logger.debug(f"  Default alert email: {ALERT_EMAIL}")
+    
     if not SENDGRID_API_KEY:
+        logger.error("❌ SENDGRID_API_KEY is NOT configured!")
         return {
             "status": "failed",
             "error": "SENDGRID_API_KEY environment variable not configured"
         }
     
+    logger.info("✅ SENDGRID_API_KEY is configured")
+    
     recipient = recipient_email or ALERT_EMAIL
+    logger.info(f"📬 Using recipient email: {recipient}")
+    logger.debug(f"  Message preview: {message[:100]}..." if len(message) > 100 else f"  Message: {message}")
     
     try:
+        logger.info("📤 Preparing SendGrid API request for custom notification...")
+        
+        payload = {
+            "personalizations": [
+                {
+                    "to": [{"email": recipient}],
+                    "subject": subject
+                }
+            ],
+            "from": {
+                "email": ALERT_EMAIL,
+                "name": "System Notification"
+            },
+            "content": [
+                {
+                    "type": "text/plain",
+                    "value": message
+                }
+            ]
+        }
+        
+        logger.debug(f"  Payload structure: {json.dumps({k: v if k != 'content' else '...' for k, v in payload.items()}, indent=2)}")
+        
+        headers = {
+            "Authorization": f"Bearer {SENDGRID_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        logger.debug(f"  Headers: Authorization: Bearer [***hidden***], Content-Type: application/json")
+        logger.info("🔗 Sending request to SendGrid API (https://api.sendgrid.com/v3/mail/send)...")
+        
         response = requests.post(
             "https://api.sendgrid.com/v3/mail/send",
-            headers={
-                "Authorization": f"Bearer {SENDGRID_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "personalizations": [
-                    {
-                        "to": [{"email": recipient}],
-                        "subject": subject
-                    }
-                ],
-                "from": {
-                    "email": ALERT_EMAIL,
-                    "name": "System Notification"
-                },
-                "content": [
-                    {
-                        "type": "text/plain",
-                        "value": message
-                    }
-                ]
-            }
+            headers=headers,
+            json=payload
         )
         
+        logger.info(f"📥 Received response from SendGrid:")
+        logger.info(f"  Status Code: {response.status_code}")
+        logger.info(f"  Response Headers: {dict(response.headers)}")
+        logger.debug(f"  Response Body: {response.text}")
+        
         if response.status_code == 202:
+            logger.info("✅ CUSTOM NOTIFICATION SENT SUCCESSFULLY! (Status: 202 Accepted)")
+            logger.info("=" * 80)
             return {
                 "status": "sent",
                 "message": "Email sent successfully",
                 "response_code": response.status_code
             }
         else:
+            logger.error(f"❌ SendGrid API returned unexpected status code: {response.status_code}")
+            logger.error(f"  Response text: {response.text}")
+            logger.info("=" * 80)
             return {
                 "status": "failed",
                 "error": f"SendGrid API error: {response.status_code}"
             }
     except Exception as e:
+        logger.error(f"❌ EXCEPTION occurred while sending custom notification: {type(e).__name__}")
+        logger.error(f"  Error message: {str(e)}")
+        logger.exception(f"  Full traceback:")
+        logger.info("=" * 80)
         return {
             "status": "failed",
             "error": str(e)
