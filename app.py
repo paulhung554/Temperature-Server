@@ -34,7 +34,7 @@ plc_data = {
 }
 
 # Configuration
-SENDGRID_API_KEY = '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'
+SENDGRID_API_KEY = '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'
 ALERT_EMAIL = "paul.hung@se.com"
 
 # Threshold storage (in-memory for now, can be upgraded to database)
