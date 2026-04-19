@@ -34,7 +34,7 @@ plc_data = {
 }
 
 # Configuration
-SENDGRID_API_KEY = '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'
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
 ALERT_EMAIL = "paul.hung@se.com"
 
 # Threshold storage (in-memory for now, can be upgraded to database)
