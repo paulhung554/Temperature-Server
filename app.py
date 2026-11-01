@@ -51,6 +51,15 @@ manual_temperatures = {
     "PLC2": None
 }
 
+# Desired setpoint commanded from the website, pending write to the PLC.
+# Stored in raw register units (Celsius * 10), same scale as the temperature register.
+# Separate from threshold_config's plc*_setpoint, which reflects the PLC's
+# CONFIRMED actual register value (published by the local Modbus script).
+setpoint_commands = {
+    "plc1": None,
+    "plc2": None
+}
+
 # PLC configuration
 PLC_CONFIG = {
     "PLC1": {"ip": "192.168.3.100", "port": 502, "slave_unit": 1},
@@ -387,6 +396,57 @@ def update_plc_setpoint(plc_id):
     except Exception as e:
         logger.error(f"❌ Error updating {plc_id} setpoint: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": str(e)}), 400
+
+
+@app.route('/setpoint/<plc_id>/command', methods=['POST'])
+def set_setpoint_command(plc_id):
+    """
+    Command a new setpoint to be written to the PLC's register (%MW8960).
+    The local Modbus script polls this and performs the actual Modbus write.
+    Args:
+        plc_id: 'plc1' or 'plc2'
+    Expects JSON: {"setpoint": <raw register value, Celsius * 10>}
+    """
+    try:
+        plc_id = plc_id.lower()
+        if plc_id not in setpoint_commands:
+            logger.warning(f"POST /setpoint/{plc_id}/command - Invalid PLC ID: {plc_id}")
+            return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
+
+        data = request.get_json()
+        if not data or data.get('setpoint') is None:
+            return jsonify({"status": "error", "message": "Missing setpoint"}), 400
+        raw_value = int(round(float(data['setpoint'])))
+
+        setpoint_commands[plc_id] = raw_value
+
+        logger.info("=" * 70)
+        logger.info(f"🎯 NEW SETPOINT COMMAND FOR {plc_id.upper()} - pending write to PLC")
+        logger.info(f"  Commanded raw value: {raw_value}")
+        logger.info("=" * 70)
+
+        return jsonify({
+            "status": "success",
+            "message": f"{plc_id} setpoint command queued",
+            "plc": plc_id,
+            "command": raw_value
+        }), 200
+    except Exception as e:
+        logger.error(f"❌ Error setting setpoint command for {plc_id}: {str(e)}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+
+@app.route('/setpoint/<plc_id>/command', methods=['GET'])
+def get_setpoint_command(plc_id):
+    """
+    Get the pending setpoint command for a specific PLC (polled by the local Modbus script).
+    Args:
+        plc_id: 'plc1' or 'plc2'
+    """
+    plc_id = plc_id.lower()
+    if plc_id not in setpoint_commands:
+        return jsonify({"error": f"Invalid PLC ID: {plc_id}"}), 404
+    return jsonify({"plc": plc_id, "command": setpoint_commands[plc_id]}), 200
 
 
 @app.route('/temperature/manual/<plc_id>', methods=['POST'])
