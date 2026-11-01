@@ -8,8 +8,6 @@ import requests
 import json
 import logging
 from datetime import datetime
-from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ModbusException
 
 # Configure comprehensive logging
 logging.basicConfig(
@@ -60,47 +58,6 @@ setpoint_commands = {
     "plc2": None
 }
 
-# PLC configuration
-PLC_CONFIG = {
-    "PLC1": {"ip": "192.168.3.100", "port": 502, "slave_unit": 1},
-    "PLC2": {"ip": "192.168.3.101", "port": 502, "slave_unit": 1}
-}
-
-def read_plc_temperature(plc_id):
-    """
-    Read current temperature from PLC
-    """
-    if plc_id not in PLC_CONFIG:
-        return None
-    
-    config = PLC_CONFIG[plc_id]
-    try:
-        client = ModbusTcpClient(config["ip"], port=config["port"])
-        if client.connect():
-            result = client.read_holding_registers(8959, count=1, device_id=config["slave_unit"])
-            client.close()
-            if not result.isError():
-                temperature = result.registers[0]
-                timestamp = datetime.now().isoformat()
-                data = {
-                    "temperature": temperature,
-                    "plc": plc_id,
-                    "register": 8959,
-                    "timestamp": timestamp
-                }
-                # Update plc_data
-                plc_data[plc_id] = data
-                logger.info(f"Read temperature from {plc_id}: {temperature}°C")
-                return data
-            else:
-                logger.error(f"Modbus error reading from {plc_id}")
-                return None
-        else:
-            logger.error(f"Failed to connect to {plc_id}")
-            return None
-    except Exception as e:
-        logger.error(f"Error reading from {plc_id}: {str(e)}")
-        return None
 
 @app.route('/', methods=['GET'])
 def root():
@@ -166,17 +123,20 @@ def get_plc_data():
 @app.route('/read-plc/<plc_id>', methods=['GET'])
 def read_plc(plc_id):
     """
-    Read current temperature from specified PLC
+    Return the most recently received temperature reading for the specified PLC.
+    Render cannot open a Modbus connection to the PLC's private LAN address directly,
+    so this serves whatever the local Modbus script last pushed via POST /temperature,
+    rather than attempting a live (always-failing) connection from the cloud.
     """
     plc_id = plc_id.upper()
     if plc_id not in ["PLC1", "PLC2"]:
         return jsonify({"status": "error", "message": "Invalid PLC ID"}), 400
-    
-    data = read_plc_temperature(plc_id)
+
+    data = plc_data.get(plc_id)
     if data:
         return jsonify({"status": "success", "data": data}), 200
     else:
-        return jsonify({"status": "error", "message": f"Failed to read from {plc_id}"}), 500
+        return jsonify({"status": "error", "message": f"No data received from {plc_id} yet"}), 404
 
 @app.route('/temperature', methods=['POST'])
 def receive_sensordata():
